@@ -1,0 +1,15 @@
+{
+    "servers": {
+        "steplock": {
+            "type": "stdio",
+            "command": "uv",
+            "args": [
+                "run",
+                "python",
+                "-m",
+                "steplock.entry_points.main"
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    }
+}
