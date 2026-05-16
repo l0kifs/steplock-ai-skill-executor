@@ -13,6 +13,7 @@ class Step:
     instruction: str
     verify_script_path: str | None = None
     on_fail: Literal["retry", "abort"] = "abort"
+    helper_script_paths: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

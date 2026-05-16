@@ -52,18 +52,35 @@ class YamlSkillLoader(ISkillLoader):
 
             # Resolve verify script to absolute path
             verify_script_path: str | None = None
-            if "verify" in step_data and step_data["verify"]:
+            if step_data.get("verify"):
                 verify_script_path = os.path.join(base_dir, step_data["verify"])
 
             on_fail = step_data.get("on_fail", "abort")
             if on_fail not in ("retry", "abort"):
-                raise InvalidSkillDefinitionError(f"Invalid on_fail value '{on_fail}' in step '{step_id}'. Must be 'retry' or 'abort'.")
+                raise InvalidSkillDefinitionError(
+                    f"Invalid on_fail value '{on_fail}' in step '{step_id}'. Must be 'retry' or 'abort'."
+                )
 
-            steps.append(Step(
-                id=step_id,
-                instruction=instruction,
-                verify_script_path=verify_script_path,
-                on_fail=on_fail,
-            ))
+            # Resolve helper scripts to absolute paths keyed by filename stem
+            helper_script_paths: dict[str, str] = {}
+            for helper_rel in step_data.get("helpers", []) or []:
+                abs_helper = os.path.join(base_dir, helper_rel)
+                stem = os.path.splitext(os.path.basename(helper_rel))[0]
+                if stem in helper_script_paths:
+                    raise InvalidSkillDefinitionError(
+                        f"Duplicate helper script name '{stem}' in step '{step_id}'. "
+                        f"Helper script names must be unique within a step."
+                    )
+                helper_script_paths[stem] = abs_helper
+
+            steps.append(
+                Step(
+                    id=step_id,
+                    instruction=instruction,
+                    verify_script_path=verify_script_path,
+                    on_fail=on_fail,
+                    helper_script_paths=helper_script_paths,
+                )
+            )
 
         return Skill(name=name, description=description, steps=steps)

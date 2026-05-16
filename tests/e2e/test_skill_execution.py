@@ -216,7 +216,7 @@ async def test_server_exposes_three_tools(simple_skill):
         tools = await client.list_tools()
 
     tool_names = {t.name for t in tools}
-    assert tool_names == {"list_skills", "start_skill", "submit_step_output"}
+    assert tool_names == {"list_skills", "start_skill", "submit_step_output", "run_helper_script"}
 
 
 # ---------------------------------------------------------------------------
@@ -585,3 +585,194 @@ async def test_default_wiring_merges_home_and_project_skills(
 
     names = {s["name"] for s in result.data}
     assert names == {"simple-skill", "single-step-skill"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: helper scripts
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def helper_skill(tmp_path):
+    """Skill with a helper script on the first step."""
+    skill_dir = tmp_path / "helper-skill"
+    skill_dir.mkdir()
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    # Helper that echoes its arguments to stdout
+    (scripts_dir / "get_info.py").write_text("import sys\nprint('info:' + ' '.join(sys.argv[1:]))\n")
+    (skill_dir / "SKILL.yaml").write_text(
+        """
+name: helper-skill
+description: Skill with a helper script.
+
+steps:
+  - id: step-1
+    instruction: Use the helper to gather info.
+    helpers:
+      - scripts/get_info.py
+
+  - id: step-2
+    instruction: Finish up.
+""".strip()
+    )
+    return str(skill_dir)
+
+
+@pytest.fixture
+def helper_stderr_skill(tmp_path):
+    """Skill with a helper that writes to stderr and exits non-zero."""
+    skill_dir = tmp_path / "helper-stderr-skill"
+    skill_dir.mkdir()
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "failing_helper.py").write_text("import sys\nsys.stderr.write('error detail\\n')\nsys.exit(2)\n")
+    (skill_dir / "SKILL.yaml").write_text(
+        """
+name: helper-stderr-skill
+description: Skill with a helper that exits non-zero.
+
+steps:
+  - id: step-1
+    instruction: Run the failing helper.
+    helpers:
+      - scripts/failing_helper.py
+""".strip()
+    )
+    return str(skill_dir)
+
+
+async def test_server_exposes_four_tools(simple_skill):
+    server = make_server(simple_skill)
+    async with Client(server) as client:
+        tools = await client.list_tools()
+
+    tool_names = {t.name for t in tools}
+    assert tool_names == {"list_skills", "start_skill", "submit_step_output", "run_helper_script"}
+
+
+async def test_start_skill_includes_helper_scripts(helper_skill):
+    server = make_server(helper_skill)
+    async with Client(server) as client:
+        result = await client.call_tool("start_skill", {"skill_name": "helper-skill"})
+        data = result.data
+
+    assert data["helper_scripts"] == ["get_info"]
+
+
+async def test_start_skill_no_helpers_returns_empty_list(simple_skill):
+    server = make_server(simple_skill)
+    async with Client(server) as client:
+        result = await client.call_tool("start_skill", {"skill_name": "simple-skill"})
+        data = result.data
+
+    assert data["helper_scripts"] == []
+
+
+async def test_submit_step_output_next_step_includes_helper_scripts(helper_skill):
+    """helper_scripts for the next step are returned when advancing."""
+    server = make_server(helper_skill)
+    async with Client(server) as client:
+        start = await client.call_tool("start_skill", {"skill_name": "helper-skill"})
+        session_id = start.data["session_id"]
+
+        result = await client.call_tool("submit_step_output", {"session_id": session_id, "output": "done"})
+        data = result.data
+
+    assert data["status"] == "next_step"
+    assert data.get("helper_scripts", []) == []
+
+
+async def test_run_helper_script_returns_stdout(helper_skill):
+    server = make_server(helper_skill)
+    async with Client(server) as client:
+        start = await client.call_tool("start_skill", {"skill_name": "helper-skill"})
+        session_id = start.data["session_id"]
+
+        result = await client.call_tool(
+            "run_helper_script",
+            {"session_id": session_id, "script_name": "get_info"},
+        )
+        data = result.data
+
+    assert data["exit_code"] == 0
+    assert "info:" in data["stdout"]
+    assert data["stderr"] == ""
+
+
+async def test_run_helper_script_passes_args(helper_skill):
+    server = make_server(helper_skill)
+    async with Client(server) as client:
+        start = await client.call_tool("start_skill", {"skill_name": "helper-skill"})
+        session_id = start.data["session_id"]
+
+        result = await client.call_tool(
+            "run_helper_script",
+            {"session_id": session_id, "script_name": "get_info", "args": ["foo", "bar"]},
+        )
+        data = result.data
+
+    assert data["exit_code"] == 0
+    assert "info:foo bar" in data["stdout"]
+
+
+async def test_run_helper_script_returns_stderr_and_exit_code(helper_stderr_skill):
+    server = make_server(helper_stderr_skill)
+    async with Client(server) as client:
+        start = await client.call_tool("start_skill", {"skill_name": "helper-stderr-skill"})
+        session_id = start.data["session_id"]
+
+        result = await client.call_tool(
+            "run_helper_script",
+            {"session_id": session_id, "script_name": "failing_helper"},
+        )
+        data = result.data
+
+    assert data["exit_code"] == 2
+    assert "error detail" in data["stderr"]
+
+
+async def test_run_helper_script_unknown_name_returns_error(helper_skill):
+    server = make_server(helper_skill)
+    async with Client(server) as client:
+        start = await client.call_tool("start_skill", {"skill_name": "helper-skill"})
+        session_id = start.data["session_id"]
+
+        result = await client.call_tool(
+            "run_helper_script",
+            {"session_id": session_id, "script_name": "no_such_helper"},
+        )
+        data = result.data
+
+    assert "error" in data
+
+
+async def test_run_helper_script_invalid_session_returns_error(helper_skill):
+    server = make_server(helper_skill)
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "run_helper_script",
+            {"session_id": "00000000-0000-0000-0000-000000000000", "script_name": "get_info"},
+        )
+        data = result.data
+
+    assert "error" in data
+
+
+async def test_run_helper_script_not_available_on_next_step(helper_skill):
+    """After advancing, step-2 has no helpers — run_helper_script must fail."""
+    server = make_server(helper_skill)
+    async with Client(server) as client:
+        start = await client.call_tool("start_skill", {"skill_name": "helper-skill"})
+        session_id = start.data["session_id"]
+
+        # Advance to step-2
+        await client.call_tool("submit_step_output", {"session_id": session_id, "output": "done"})
+
+        result = await client.call_tool(
+            "run_helper_script",
+            {"session_id": session_id, "script_name": "get_info"},
+        )
+        data = result.data
+
+    assert "error" in data

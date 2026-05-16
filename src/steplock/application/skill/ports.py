@@ -44,6 +44,16 @@ class IVerificationRunner(ABC):
         ...
 
 
+class IHelperRunner(ABC):
+    @abstractmethod
+    def run(self, script_path: str, args: list[str]) -> tuple[str, str, int]:
+        """Run a helper script with the given arguments passed via sys.argv.
+
+        Returns (stdout, stderr, exit_code).
+        """
+        ...
+
+
 class ISessionRepository(ABC):
     @abstractmethod
     def save(self, session: SkillSession) -> None: ...

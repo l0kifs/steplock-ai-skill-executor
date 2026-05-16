@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastmcp import FastMCP
 
-from steplock.application.skill.commands import StartSkillCommand, SubmitStepOutputCommand
+from steplock.application.skill.commands import RunHelperScriptCommand, StartSkillCommand, SubmitStepOutputCommand
 from steplock.application.skill.ports import ISkillRegistry
 from steplock.application.skill.services import SkillExecutionService
 from steplock.config.settings import PROJECT_SKILLS_REGISTRY_PATH, SKILLS_REGISTRY_PATH
@@ -12,7 +12,7 @@ from steplock.domains.skill.exceptions import SessionNotFoundError, SkillNotFoun
 from steplock.infrastructure.skill.loaders import YamlSkillLoader
 from steplock.infrastructure.skill.registry import CompositeSkillRegistry, SkillsRegistry
 from steplock.infrastructure.skill.repositories import InMemorySessionRepository
-from steplock.infrastructure.skill.runners import SubprocessVerificationRunner
+from steplock.infrastructure.skill.runners import SubprocessHelperRunner, SubprocessVerificationRunner
 
 
 def create_server(skill_registry: ISkillRegistry | None = None) -> FastMCP:
@@ -29,6 +29,7 @@ def create_server(skill_registry: ISkillRegistry | None = None) -> FastMCP:
 
     skill_loader = YamlSkillLoader()
     verification_runner = SubprocessVerificationRunner()
+    helper_runner = SubprocessHelperRunner()
     session_repository = InMemorySessionRepository()
 
     service = SkillExecutionService(
@@ -36,6 +37,7 @@ def create_server(skill_registry: ISkillRegistry | None = None) -> FastMCP:
         verification_runner=verification_runner,
         session_repository=session_repository,
         skill_registry=skill_registry,
+        helper_runner=helper_runner,
     )
 
     mcp = FastMCP(
@@ -76,6 +78,7 @@ def create_server(skill_registry: ISkillRegistry | None = None) -> FastMCP:
             "session_id": result.session_id,
             "step_id": result.step_id,
             "instruction": result.instruction,
+            "helper_scripts": result.helper_scripts,
         }
 
     @mcp.tool
@@ -103,7 +106,40 @@ def create_server(skill_registry: ISkillRegistry | None = None) -> FastMCP:
             response["instruction"] = result.instruction
         if result.message is not None:
             response["message"] = result.message
+        if result.helper_scripts:
+            response["helper_scripts"] = result.helper_scripts
         return response
+
+    @mcp.tool
+    def run_helper_script(session_id: str, script_name: str, args: list[str] | None = None) -> dict:
+        """Run a helper script available on the current step.
+
+        Helper scripts provide utility actions the agent can invoke during a step,
+        such as gathering context or performing preparatory work.
+
+        Args:
+            session_id: The session identifier returned by start_skill.
+            script_name: Name of the helper script as listed in helper_scripts.
+            args: Optional list of string arguments passed to the script via sys.argv.
+        """
+        try:
+            result = service.run_helper_script(
+                RunHelperScriptCommand(
+                    session_id=session_id,
+                    script_name=script_name,
+                    args=args or [],
+                )
+            )
+        except (SessionNotFoundError, ValueError) as e:
+            return {"error": str(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit_code": result.exit_code,
+        }
 
     return mcp
 

@@ -1,11 +1,11 @@
-"""Subprocess-based verification script runner."""
+"""Subprocess-based verification and helper script runners."""
 
 from __future__ import annotations
 
 import subprocess
 import sys
 
-from steplock.application.skill.ports import IVerificationRunner
+from steplock.application.skill.ports import IHelperRunner, IVerificationRunner
 
 
 class SubprocessVerificationRunner(IVerificationRunner):
@@ -23,3 +23,19 @@ class SubprocessVerificationRunner(IVerificationRunner):
         )
         script_output = (result.stdout + result.stderr).strip()
         return result.returncode == 0, script_output
+
+
+class SubprocessHelperRunner(IHelperRunner):
+    def run(self, script_path: str, args: list[str]) -> tuple[str, str, int]:
+        """Run a helper script with the given arguments appended to sys.argv.
+
+        The script is run with the same Python interpreter as the current process.
+        Returns (stdout, stderr, exit_code).
+        """
+        result = subprocess.run(
+            [sys.executable, script_path, *args],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout, result.stderr, result.returncode

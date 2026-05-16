@@ -22,13 +22,14 @@ Agent  ──►  StepLock (MCP)  ──►  Step 1 instruction
          ✔ Pass → next step    ✗ Fail → guidance returned, agent retries
 ```
 
-StepLock exposes three MCP tools to the agent:
+StepLock exposes four MCP tools to the agent:
 
 | Tool | Purpose |
 |------|---------|
 | `list_skills` | Discover available skills by name and description |
-| `start_skill` | Begin execution — returns session ID and first step |
+| `start_skill` | Begin execution — returns session ID, first step, and available helpers |
 | `submit_step_output` | Submit output for the current step and receive the next |
+| `run_helper_script` | Run a helper script declared on the current step |
 
 ---
 
@@ -50,7 +51,7 @@ Add to `.vscode/mcp.json` (workspace-scoped) or open **MCP: Open User Configurat
 }
 ```
 
-Verify the server is running: open Copilot Chat → **Select tools** → confirm `list_skills`, `start_skill`, and `submit_step_output` are listed.
+Verify the server is running: open Copilot Chat → **Select tools** → confirm `list_skills`, `start_skill`, `submit_step_output`, and `run_helper_script` are listed.
 
 ---
 
@@ -63,7 +64,8 @@ my-skill/
 │   ├── step1.md
 │   └── step2.md
 └── scripts/
-    └── verify_step1.py
+    ├── verify_step1.py
+    └── get_context.py
 ```
 
 **`SKILL.yaml`**
@@ -77,6 +79,8 @@ steps:
     instruction: steps/step1.md     # file path or inline string
     verify: scripts/verify_step1.py # optional
     on_fail: retry                  # retry | abort (default: abort)
+    helpers:                        # optional list of helper scripts
+      - scripts/get_context.py
 
   - id: step-2
     instruction: steps/step2.md
@@ -87,6 +91,8 @@ steps:
 
 - `0` — output accepted, execution advances
 - non-zero — output rejected; anything printed to stdout/stderr is returned to the agent as guidance
+
+**Helper scripts** are utility scripts the agent can run during a step via `run_helper_script` to gather context or perform preparatory work. They are declared per-step with the `helpers` list and identified by filename without extension. They receive optional string arguments via `sys.argv` and return `stdout`, `stderr`, and `exit_code`.
 
 ---
 
@@ -124,6 +130,7 @@ If only the home-dir registry is needed, no project-level file is required. If a
 | `steps[].instruction` | ✔ | File path (relative to skill dir) or inline string |
 | `steps[].verify` | — | Path to a verification script |
 | `steps[].on_fail` | — | `retry` or `abort` (default: `abort`) |
+| `steps[].helpers` | — | List of helper script paths (relative to skill dir) |
 
 **Backward compatibility:** a single-step skill with no `verify` behaves identically to an Anthropic-model skill. Existing skills adopt with zero changes.
 
