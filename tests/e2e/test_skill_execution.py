@@ -10,9 +10,9 @@ from __future__ import annotations
 import pytest
 from fastmcp import Client
 
+import steplock.entry_points.mcp.server as _server_module
 from steplock.entry_points.mcp.server import create_server
-from steplock.infrastructure.skill.registry import InMemorySkillRegistry
-
+from steplock.infrastructure.skill.registry import CompositeSkillRegistry, InMemorySkillRegistry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -22,6 +22,12 @@ from steplock.infrastructure.skill.registry import InMemorySkillRegistry
 def make_server(*skill_paths: str):
     """Return a fresh server with the given paths registered."""
     return create_server(skill_registry=InMemorySkillRegistry(list(skill_paths)))
+
+
+def make_composite_server(*path_groups: list[str]):
+    """Return a server backed by a CompositeSkillRegistry merging N InMemorySkillRegistries."""
+    registries = [InMemorySkillRegistry(paths) for paths in path_groups]
+    return create_server(skill_registry=CompositeSkillRegistry(registries))
 
 
 # ---------------------------------------------------------------------------
@@ -110,9 +116,7 @@ def verify_fail_retry_skill(tmp_path):
     skill_dir.mkdir()
     scripts_dir = skill_dir / "scripts"
     scripts_dir.mkdir()
-    (scripts_dir / "verify.py").write_text(
-        'import sys\nprint("Output must contain the word DONE")\nsys.exit(1)\n'
-    )
+    (scripts_dir / "verify.py").write_text('import sys\nprint("Output must contain the word DONE")\nsys.exit(1)\n')
 
     (skill_dir / "SKILL.yaml").write_text(
         """
@@ -436,3 +440,148 @@ async def test_multiple_sessions_are_independent(simple_skill):
     assert result_b.data["status"] == "next_step"
     assert result_b.data["step_id"] == "step-2"
 
+
+# ---------------------------------------------------------------------------
+# Tests: CompositeSkillRegistry
+# ---------------------------------------------------------------------------
+
+
+async def test_composite_registry_lists_skills_from_both_registries(simple_skill, single_step_no_verify_skill):
+    server = make_composite_server([simple_skill], [single_step_no_verify_skill])
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+
+    names = {s["name"] for s in result.data}
+    assert names == {"simple-skill", "single-step-skill"}
+
+
+async def test_composite_registry_can_start_skill_from_second_registry(simple_skill, single_step_no_verify_skill):
+    server = make_composite_server([simple_skill], [single_step_no_verify_skill])
+    async with Client(server) as client:
+        result = await client.call_tool("start_skill", {"skill_name": "single-step-skill"})
+        data = result.data
+
+    assert data["step_id"] == "step-1"
+    assert "session_id" in data
+
+
+async def test_composite_registry_with_all_empty_registries():
+    server = make_composite_server([], [])
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+
+    assert result.data == []
+
+
+async def test_composite_registry_one_empty_one_populated(simple_skill):
+    server = make_composite_server([], [simple_skill])
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+
+    names = {s["name"] for s in result.data}
+    assert names == {"simple-skill"}
+
+
+async def test_composite_registry_skills_from_both_registries_are_startable(simple_skill, file_instruction_skill):
+    server = make_composite_server([simple_skill], [file_instruction_skill])
+    async with Client(server) as client:
+        result_a = await client.call_tool("start_skill", {"skill_name": "simple-skill"})
+        result_b = await client.call_tool("start_skill", {"skill_name": "file-instruction-skill"})
+
+    assert result_a.data["step_id"] == "step-1"
+    assert result_b.data["step_id"] == "step-1"
+
+
+# ---------------------------------------------------------------------------
+# Tests: create_server default wiring — project registry detection
+# ---------------------------------------------------------------------------
+
+
+async def test_default_wiring_includes_project_registry_when_exists(monkeypatch, tmp_path, simple_skill):
+    """When .steplock/skills-registry.yaml exists in the project dir, its skills are listed."""
+    project_steplock = tmp_path / ".steplock"
+    project_steplock.mkdir()
+    project_registry = project_steplock / "skills-registry.yaml"
+    project_registry.write_text(f"skills:\n  - {simple_skill}\n")
+
+    home_registry = tmp_path / "home" / ".steplock" / "skills-registry.yaml"
+
+    monkeypatch.setattr(_server_module, "SKILLS_REGISTRY_PATH", home_registry)
+    monkeypatch.setattr(_server_module, "PROJECT_SKILLS_REGISTRY_PATH", project_registry)
+
+    server = create_server()
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+
+    names = {s["name"] for s in result.data}
+    assert "simple-skill" in names
+
+
+async def test_default_wiring_excludes_project_registry_when_not_exists(monkeypatch, tmp_path):
+    """When project registry file does not exist, create_server raises no error and returns empty skills."""
+    home_registry = tmp_path / "home" / ".steplock" / "skills-registry.yaml"
+    nonexistent_project_registry = tmp_path / "project" / ".steplock" / "skills-registry.yaml"
+
+    monkeypatch.setattr(_server_module, "SKILLS_REGISTRY_PATH", home_registry)
+    monkeypatch.setattr(_server_module, "PROJECT_SKILLS_REGISTRY_PATH", nonexistent_project_registry)
+
+    server = create_server()
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+
+    assert result.data == []
+
+
+async def test_default_wiring_does_not_create_project_registry(monkeypatch, tmp_path):
+    """Project .steplock dir and registry file are never auto-created."""
+    home_registry = tmp_path / "home" / ".steplock" / "skills-registry.yaml"
+    project_steplock_dir = tmp_path / "project" / ".steplock"
+    nonexistent_project_registry = project_steplock_dir / "skills-registry.yaml"
+
+    monkeypatch.setattr(_server_module, "SKILLS_REGISTRY_PATH", home_registry)
+    monkeypatch.setattr(_server_module, "PROJECT_SKILLS_REGISTRY_PATH", nonexistent_project_registry)
+
+    create_server()
+
+    assert not project_steplock_dir.exists()
+    assert not nonexistent_project_registry.exists()
+
+
+async def test_default_wiring_home_registry_auto_created(monkeypatch, tmp_path):
+    """Home-dir registry is still auto-created on first use (existing behaviour preserved)."""
+    home_registry = tmp_path / "home" / ".steplock" / "skills-registry.yaml"
+    nonexistent_project_registry = tmp_path / "project" / ".steplock" / "skills-registry.yaml"
+
+    monkeypatch.setattr(_server_module, "SKILLS_REGISTRY_PATH", home_registry)
+    monkeypatch.setattr(_server_module, "PROJECT_SKILLS_REGISTRY_PATH", nonexistent_project_registry)
+
+    server = create_server()
+    async with Client(server) as client:
+        await client.call_tool("list_skills", {})
+
+    assert home_registry.exists()
+
+
+async def test_default_wiring_merges_home_and_project_skills(
+    monkeypatch, tmp_path, simple_skill, single_step_no_verify_skill
+):
+    """Skills from home-dir and project registries are both listed when both exist."""
+    home_steplock = tmp_path / "home" / ".steplock"
+    home_steplock.mkdir(parents=True)
+    home_registry = home_steplock / "skills-registry.yaml"
+    home_registry.write_text(f"skills:\n  - {simple_skill}\n")
+
+    project_steplock = tmp_path / "project" / ".steplock"
+    project_steplock.mkdir(parents=True)
+    project_registry = project_steplock / "skills-registry.yaml"
+    project_registry.write_text(f"skills:\n  - {single_step_no_verify_skill}\n")
+
+    monkeypatch.setattr(_server_module, "SKILLS_REGISTRY_PATH", home_registry)
+    monkeypatch.setattr(_server_module, "PROJECT_SKILLS_REGISTRY_PATH", project_registry)
+
+    server = create_server()
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+
+    names = {s["name"] for s in result.data}
+    assert names == {"simple-skill", "single-step-skill"}

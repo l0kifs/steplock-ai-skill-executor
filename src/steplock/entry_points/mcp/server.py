@@ -7,10 +7,10 @@ from fastmcp import FastMCP
 from steplock.application.skill.commands import StartSkillCommand, SubmitStepOutputCommand
 from steplock.application.skill.ports import ISkillRegistry
 from steplock.application.skill.services import SkillExecutionService
-from steplock.config.settings import SKILLS_REGISTRY_PATH
+from steplock.config.settings import PROJECT_SKILLS_REGISTRY_PATH, SKILLS_REGISTRY_PATH
 from steplock.domains.skill.exceptions import SessionNotFoundError, SkillNotFoundError
 from steplock.infrastructure.skill.loaders import YamlSkillLoader
-from steplock.infrastructure.skill.registry import SkillsRegistry
+from steplock.infrastructure.skill.registry import CompositeSkillRegistry, SkillsRegistry
 from steplock.infrastructure.skill.repositories import InMemorySessionRepository
 from steplock.infrastructure.skill.runners import SubprocessVerificationRunner
 
@@ -22,7 +22,10 @@ def create_server(skill_registry: ISkillRegistry | None = None) -> FastMCP:
         skill_registry: Override the default filesystem registry. Useful for testing.
     """
     if skill_registry is None:
-        skill_registry = SkillsRegistry(SKILLS_REGISTRY_PATH)
+        registries: list[ISkillRegistry] = [SkillsRegistry(SKILLS_REGISTRY_PATH)]
+        if PROJECT_SKILLS_REGISTRY_PATH.exists():
+            registries.append(SkillsRegistry(PROJECT_SKILLS_REGISTRY_PATH))
+        skill_registry = CompositeSkillRegistry(registries)
 
     skill_loader = YamlSkillLoader()
     verification_runner = SubprocessVerificationRunner()

@@ -39,9 +39,11 @@ This starts the MCP server on STDIO (default), ready to accept connections from 
 
 ## Registering Skills
 
-StepLock discovers skills through a registry file at `~/.steplock/skills-registry.yaml`.
+StepLock discovers skills from two registry files, whose skill lists are merged:
 
-The file is created automatically the first time the server starts. Add an entry for each skill directory:
+### Home-dir registry — `~/.steplock/skills-registry.yaml`
+
+Created automatically the first time the server starts. Use this for skills you want available across all projects:
 
 ```yaml
 # ~/.steplock/skills-registry.yaml
@@ -49,6 +51,21 @@ skills:
   - /home/user/my-skills/my-skill
   - /home/user/my-skills/another-skill
 ```
+
+### Project registry — `.steplock/skills-registry.yaml`
+
+Place a `.steplock/skills-registry.yaml` file in the **root directory of the project** where the MCP server is running to register project-local skills. This file is **not** created automatically — create it manually when needed:
+
+```yaml
+# .steplock/skills-registry.yaml  (in project root)
+skills:
+  - ./skills/my-project-skill
+  - /absolute/path/to/another-skill
+```
+
+If this file does not exist, StepLock silently skips it with no error.
+
+> **Merge behaviour:** skills from both registries are combined into a single list. A skill registered in the project registry is available alongside all home-dir skills.
 
 Each path must point to a directory that contains a `SKILL.yaml` file. The agent only ever sees skill **names** — filesystem paths are never exposed.
 
@@ -197,10 +214,10 @@ steps:
     instruction: Say hello to the user.
 ```
 
-Add the skill to the registry:
+Add the skill to the registry (home-dir or project-level):
 
 ```yaml
-# ~/.steplock/skills-registry.yaml
+# ~/.steplock/skills-registry.yaml  OR  .steplock/skills-registry.yaml
 skills:
   - /path/to/hello-skill
 ```

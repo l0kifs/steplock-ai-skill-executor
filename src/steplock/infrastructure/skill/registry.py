@@ -42,6 +42,23 @@ class SkillsRegistry(ISkillRegistry):
         return [str(p) for p in (data.get("skills") or [])]
 
 
+class CompositeSkillRegistry(ISkillRegistry):
+    """Merges skill paths from multiple registries."""
+
+    def __init__(self, registries: list[ISkillRegistry]) -> None:
+        self._registries = registries
+
+    def ensure_initialized(self) -> None:
+        for registry in self._registries:
+            registry.ensure_initialized()
+
+    def list_skill_paths(self) -> list[str]:
+        paths: list[str] = []
+        for registry in self._registries:
+            paths.extend(registry.list_skill_paths())
+        return paths
+
+
 class InMemorySkillRegistry(ISkillRegistry):
     """In-memory registry for testing."""
 
