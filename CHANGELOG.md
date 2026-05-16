@@ -13,8 +13,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - YAML-based skill definitions with ordered steps
 - Optional Python verification scripts per step for output validation
 - Composite skill registry that merges project-level and user-level skill registries
-- `git-commit-skill` bundled skill for guided Git commit workflow
-- `hello-skill` example skill for testing and demonstration
 - Support for `uvx steplock` installation and execution
 
 [0.1.0]: https://github.com/l0kifs/steplock-ai-skill-executor/releases/tag/v0.1.0
