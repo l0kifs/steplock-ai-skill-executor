@@ -1,6 +1,6 @@
 {
     "servers": {
-        "steplock": {
+        "steplock-dev": {
             "type": "stdio",
             "command": "uv",
             "args": [
@@ -10,6 +10,13 @@
                 "steplock.entry_points.main"
             ],
             "cwd": "${workspaceFolder}"
+        },
+        "steplock-prod": {
+            "type": "stdio",
+            "command": "uvx",
+            "args": [
+                "steplock"
+            ]
         }
     }
 }
