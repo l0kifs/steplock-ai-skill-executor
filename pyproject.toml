@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "steplock"
-version = "0.2.1"
+version = "0.2.2"
 description = "An MCP server gatekeeper runtime that enforces step-by-step AI skill execution with output verification, ensuring stable and reliable agent workflows regardless of LLM compliance."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { file = "LICENSE" }
@@ -16,7 +16,6 @@ keywords = ["mcp", "agent", "skill", "llm", "verification", "step-sequencer", "a
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",

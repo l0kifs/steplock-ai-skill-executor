@@ -147,4 +147,4 @@ def create_server(skill_registry: ISkillRegistry | None = None) -> FastMCP:
 mcp = create_server()
 
 if __name__ == "__main__":
-    mcp.run()
+    mcp.run(show_banner=False)
