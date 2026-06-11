@@ -1,5 +1,7 @@
 # StepLock
 
+<!-- Version: 0.3.0 | Last Updated: 2026-06-11 -->
+
 [![PyPI version](https://img.shields.io/pypi/v/steplock)](https://pypi.org/project/steplock/)
 [![Python](https://img.shields.io/pypi/pyversions/steplock)](https://pypi.org/project/steplock/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -98,12 +100,30 @@ steps:
 
 ## Registering skills
 
-StepLock discovers skills through registry files in two locations, merged together:
+StepLock discovers skills through two merged sources, each supporting auto-discovery:
 
-| Registry | Created automatically | Purpose |
-|----------|---------------------|---------|
-| `~/.steplock/skills-registry.yaml` | Yes — on first run | User-wide skills available in every project |
-| `./.steplock/skills-registry.yaml` | No | Project-local skills, placed in the project root where the MCP server is running |
+| Location | Created automatically | Auto-discovery | Purpose |
+|----------|---------------------|----------------|---------|
+| `~/.steplock/` | Yes — on first run | ✔ Recursively scans subdirectories | User-wide skills |
+| `./.steplock/` | No | ✔ Recursively scans subdirectories | Project-local skills |
+
+### Auto-discovery
+
+Place skill directories directly inside either location. StepLock recursively scans for `SKILL.yaml` files:
+
+```
+.steplock/
+├── skills-registry.yaml           # explicit paths (optional)
+├── my-skill/
+│   └── SKILL.yaml
+└── skill-pack/
+    ├── skill-a/
+    │   └── SKILL.yaml
+    └── skill-b/
+        └── SKILL.yaml
+```
+
+### Explicit registry (optional)
 
 ```yaml
 # ~/.steplock/skills-registry.yaml  (or ./.steplock/skills-registry.yaml)
@@ -112,9 +132,13 @@ skills:
   - /home/user/my-skills/another-skill
 ```
 
-Each path must point to a directory containing a `SKILL.yaml` file. Filesystem paths are never exposed to the agent — only skill names.
+Registry entries can be:
+- **Skill directories** — containing a `SKILL.yaml` file
+- **Folder paths** — recursively scanned for `SKILL.yaml` files
 
-If only the home-dir registry is needed, no project-level file is required. If a `.steplock/skills-registry.yaml` file is present in the working directory where the MCP server starts, its skills are automatically added to the available set.
+### Deduplication
+
+If the same skill name appears in multiple locations, the project-local entry (`./.steplock/`) takes precedence over the user-wide entry (`~/.steplock/`). Filesystem paths are never exposed to the agent — only skill names.
 
 ---
 
@@ -162,7 +186,9 @@ Connect to VS Code / Copilot from a local checkout — add to `.vscode/mcp.json`
 Run tests:
 
 ```bash
-uv run pytest tests/e2e/ -v
+uv run pytest tests/ -v          # Run all tests
+uv run pytest tests/e2e/ -v      # E2E tests only
+uv run pytest tests/unit/ -v     # Unit tests only
 ```
 
 Tests use an in-memory transport — no running server instance required.

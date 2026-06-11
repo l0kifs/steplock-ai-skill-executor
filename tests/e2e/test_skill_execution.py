@@ -12,7 +12,12 @@ from fastmcp import Client
 
 import steplock.entry_points.mcp.server as _server_module
 from steplock.entry_points.mcp.server import create_server
-from steplock.infrastructure.skill.registry import CompositeSkillRegistry, InMemorySkillRegistry
+from steplock.infrastructure.skill.registry import (
+    CompositeSkillRegistry,
+    InMemorySkillRegistry,
+    SkillsRegistry,
+)
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -776,3 +781,269 @@ async def test_run_helper_script_not_available_on_next_step(helper_skill):
         data = result.data
 
     assert "error" in data
+
+
+# ---------------------------------------------------------------------------
+# Tests: Auto-Discovery and Folder Support
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def steplock_dir(tmp_path):
+    """Create a .steplock directory with skills for auto-discovery testing."""
+    steplock = tmp_path / ".steplock"
+    steplock.mkdir()
+
+    # Create a skill directly in .steplock
+    skill1 = steplock / "auto-skill-1"
+    skill1.mkdir()
+    (skill1 / "SKILL.yaml").write_text(
+        """
+name: auto-skill-1
+description: Auto-discovered skill from .steplock root.
+
+steps:
+  - id: step-1
+    instruction: Run auto-discovered skill step 1.
+""".strip()
+    )
+
+    # Create a skill in a nested subdirectory
+    nested = steplock / "sub" / "nested" / "auto-skill-2"
+    nested.mkdir(parents=True)
+    (nested / "SKILL.yaml").write_text(
+        """
+name: auto-skill-2
+description: Auto-discovered skill from nested directory.
+
+steps:
+  - id: step-1
+    instruction: Run nested auto-discovered skill step 1.
+""".strip()
+    )
+
+    return str(steplock)
+
+
+@pytest.fixture
+def folder_with_skills(tmp_path):
+    """Create a folder containing multiple skills for folder scanning tests."""
+    folder = tmp_path / "skills-folder"
+    folder.mkdir()
+
+    # Create skill at root level
+    skill1 = folder / "folder-skill-1"
+    skill1.mkdir()
+    (skill1 / "SKILL.yaml").write_text(
+        """
+name: folder-skill-1
+description: Skill in folder root.
+
+steps:
+  - id: step-1
+    instruction: Step 1 of folder skill 1.
+""".strip()
+    )
+
+    # Create skill in subfolder
+    skill2 = folder / "sub" / "folder-skill-2"
+    skill2.mkdir(parents=True)
+    (skill2 / "SKILL.yaml").write_text(
+        """
+name: folder-skill-2
+description: Skill in subfolder.
+
+steps:
+  - id: step-1
+    instruction: Step 1 of folder skill 2.
+""".strip()
+    )
+
+    # Create skill in deep nested subfolder
+    skill3 = folder / "sub" / "deep" / "folder-skill-3"
+    skill3.mkdir(parents=True)
+    (skill3 / "SKILL.yaml").write_text(
+        """
+name: folder-skill-3
+description: Skill in deep nested folder.
+
+steps:
+  - id: step-1
+    instruction: Step 1 of folder skill 3.
+""".strip()
+    )
+
+    return str(folder)
+
+
+@pytest.mark.e2e
+async def test_auto_discovered_skills_available_in_server(steplock_dir, tmp_path):
+    """Skills auto-discovered from .steplock directories are available."""
+    # Arrange
+    registry_path = tmp_path / "registry.yaml"
+    registry = SkillsRegistry(registry_path, auto_discover_base=Path(steplock_dir))
+    server = create_server(skill_registry=registry)
+
+    # Act
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+        skills = result.data
+
+    # Assert
+    names = {s["name"] for s in skills}
+    assert "auto-skill-1" in names
+    assert "auto-skill-2" in names
+
+
+@pytest.mark.e2e
+async def test_folder_in_registry_discovers_nested_skills(folder_with_skills, tmp_path):
+    """Skill folders in registry discover nested skills."""
+    # Arrange
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(f"skills:\n  - {folder_with_skills}\n")
+
+    registry = SkillsRegistry(registry_path)
+    server = create_server(skill_registry=registry)
+
+    # Act
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+        skills = result.data
+
+    # Assert
+    names = {s["name"] for s in skills}
+    assert "folder-skill-1" in names
+    assert "folder-skill-2" in names
+    assert "folder-skill-3" in names
+
+
+@pytest.mark.e2e
+async def test_mixed_registry_entries_work_correctly(steplock_dir, folder_with_skills, tmp_path):
+    """Mixed registry entries (individual paths + folders) work correctly."""
+    # Arrange
+    # Create an additional skill for explicit registry entry
+    explicit_skill_dir = tmp_path / "explicit-skill"
+    explicit_skill_dir.mkdir()
+    (explicit_skill_dir / "SKILL.yaml").write_text(
+        """
+name: explicit-skill
+description: Explicitly registered skill.
+
+steps:
+  - id: step-1
+    instruction: Step 1 of explicit skill.
+""".strip()
+    )
+
+    # Create registry with mixed entries
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(
+        f"""skills:
+  - {explicit_skill_dir}
+  - {folder_with_skills}
+"""
+    )
+
+    # Add auto-discovery from steplock_dir
+    registry = SkillsRegistry(registry_path, auto_discover_base=Path(steplock_dir))
+    server = create_server(skill_registry=registry)
+
+    # Act
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+        skills = result.data
+
+    # Assert
+    names = {s["name"] for s in skills}
+    # Auto-discovered
+    assert "auto-skill-1" in names
+    assert "auto-skill-2" in names
+    # From folder
+    assert "folder-skill-1" in names
+    assert "folder-skill-2" in names
+    assert "folder-skill-3" in names
+    # Explicit
+    assert "explicit-skill" in names
+
+
+@pytest.mark.e2e
+async def test_composite_registry_precedence_project_local_wins(
+    tmp_path,
+):
+    """Project-local skills take precedence over user-wide (same name)."""
+    # Arrange
+    # User-wide skill with name "priority-skill"
+    user_skill_dir = tmp_path / "user" / "priority-skill"
+    user_skill_dir.mkdir(parents=True)
+    (user_skill_dir / "SKILL.yaml").write_text(
+        """
+name: priority-skill
+description: User-wide skill with priority.
+
+steps:
+  - id: step-1
+    instruction: User skill step.
+""".strip()
+    )
+
+    # Project-local skill with same name
+    project_skill_dir = tmp_path / "project" / "priority-skill"
+    project_skill_dir.mkdir(parents=True)
+    (project_skill_dir / "SKILL.yaml").write_text(
+        """
+name: priority-skill
+description: Project-local skill that should win.
+
+steps:
+  - id: step-1
+    instruction: Project skill step.
+""".strip()
+    )
+
+    user_registry = InMemorySkillRegistry([str(user_skill_dir)])
+    project_registry = InMemorySkillRegistry([str(project_skill_dir)])
+
+    # User registry first, project registry second (should win)
+    composite = CompositeSkillRegistry([user_registry, project_registry])
+    server = create_server(skill_registry=composite)
+
+    # Act
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+        skills = result.data
+
+    # Assert
+    assert len(skills) == 1
+    assert skills[0]["name"] == "priority-skill"
+    # The project-local skill should be the one available
+    # We can verify by checking the description
+    assert "Project-local" in skills[0]["description"]
+
+
+@pytest.mark.e2e
+async def test_deduplication_same_path_appears_twice(folder_with_skills, tmp_path):
+    """Same skill path appearing twice is deduplicated."""
+    # Arrange
+    registry_path = tmp_path / "registry.yaml"
+    registry_path.write_text(
+        f"""skills:
+  - {folder_with_skills}
+  - {folder_with_skills}
+"""
+    )
+
+    registry = SkillsRegistry(registry_path)
+    server = create_server(skill_registry=registry)
+
+    # Act
+    async with Client(server) as client:
+        result = await client.call_tool("list_skills", {})
+        skills = result.data
+
+    # Assert
+    names = [s["name"] for s in skills]
+    # No duplicates - each skill name appears once
+    assert len(names) == len(set(names))
+    assert "folder-skill-1" in names
+    assert "folder-skill-2" in names
+    assert "folder-skill-3" in names

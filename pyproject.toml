@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "steplock"
-version = "0.2.2"
+version = "0.3.0"
 description = "An MCP server gatekeeper runtime that enforces step-by-step AI skill execution with output verification, ensuring stable and reliable agent workflows regardless of LLM compliance."
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { file = "LICENSE" }
@@ -74,7 +74,9 @@ addopts = [
   "--import-mode=importlib",
 ]
 markers = [
-  "e2e: end-to-end tests requiring a running Docker Compose stack",
+  "e2e: end-to-end tests with full application stack",
+  "integration: integration tests with real collaborators",
+  "unit: unit tests with all dependencies mocked",
 ]
 
 [tool.ruff]
